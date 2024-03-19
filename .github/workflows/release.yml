@@ -1,87 +1,116 @@
-name: Release # makes PyPI releases
+name: Publish Python 🐍 distribution 📦 to PyPI and TestPyPI
 
-on:
-  release:
-    types: [published]
-  workflow_dispatch:
-    inputs:
-      task:
-        type: choice
-        options: [release, test-release]
-        default: release
-        description: Release to PyPI or TestPyPI.
-
-permissions:
-  contents: read
+on: push
 
 jobs:
-  test:
-    # run test.yml first to ensure that the test suite is passing
-    uses: ./.github/workflows/test.yml
-
-  build_sdist:
-    needs: test
+  build:
+    name: Build distribution 📦
     runs-on: ubuntu-latest
+
     steps:
-      - name: Check out repo
-        uses: actions/checkout@v4
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.9"
+    - name: Install pypa/build
+      run: >-
+        python3 -m
+        pip install
+        build
+        --user
+    - name: Build a binary wheel and a source tarball
+      run: python3 -m build
+    - name: Store the distribution packages
+      uses: actions/upload-artifact@v3
+      with:
+        name: python-package-distributions
+        path: dist/
 
-      - uses: actions/setup-python@v5
-        name: Install Python
-        with:
-          python-version: "3.11"
-
-      - name: Build sdist
-        run: |
-          pip install build
-          python -m build --sdist
-
-      - uses: actions/upload-artifact@v3
-        with:
-          path: dist/*.tar.gz
-
-  build_wheels:
-    needs: test
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-14, windows-latest]
-        python-version: ["39", "310", "311"]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - name: Check out repo
-        uses: actions/checkout@v4
-
-      - name: Build wheels
-        uses: pypa/cibuildwheel@v2.16.5
-        env:
-          CIBW_BUILD: cp${{ matrix.python-version }}-*
-
-      - name: Save artifact
-        uses: actions/upload-artifact@v3
-        with:
-          path: ./wheelhouse/*.whl
-
-  release:
-    needs: [build_wheels, build_sdist]
+  publish-to-pypi:
+    name: >-
+      Publish Python 🐍 distribution 📦 to PyPI
+    if: startsWith(github.ref, 'refs/tags/')  # only publish to PyPI on tag pushes
+    needs:
+    - build
     runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/test_validation  # Replace <package-name> with your PyPI project name
     permissions:
-      # For pypi trusted publishing
-      id-token: write
+      id-token: write  # IMPORTANT: mandatory for trusted publishing
+
     steps:
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: 3.11
+    - name: Download all the dists
+      uses: actions/download-artifact@v3
+      with:
+        name: python-package-distributions
+        path: dist/
+    - name: Publish distribution 📦 to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
 
-      - name: Get build artifacts
-        uses: actions/download-artifact@v3
-        with:
-          name: artifact
-          path: dist
+  github-release:
+    name: >-
+      Sign the Python 🐍 distribution 📦 with Sigstore
+      and upload them to GitHub Release
+    needs:
+    - publish-to-pypi
+    runs-on: ubuntu-latest
 
-      - name: Publish to PyPi or TestPyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          skip-existing: true
-          verbose: true
-          repository-url: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.task == 'test-release' && 'https://test.pypi.org/legacy/' || '' }}
+    permissions:
+      contents: write  # IMPORTANT: mandatory for making GitHub Releases
+      id-token: write  # IMPORTANT: mandatory for sigstore
+
+    steps:
+    - name: Download all the dists
+      uses: actions/download-artifact@v3
+      with:
+        name: python-package-distributions
+        path: dist/
+    - name: Sign the dists with Sigstore
+      uses: sigstore/gh-action-sigstore-python@v1.2.3
+      with:
+        inputs: >-
+          ./dist/*.tar.gz
+          ./dist/*.whl
+    - name: Create GitHub Release
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: >-
+        gh release create
+        '${{ github.ref_name }}'
+        --repo '${{ github.repository }}'
+        --notes ""
+    - name: Upload artifact signatures to GitHub Release
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      # Upload to GitHub Release using the `gh` CLI.
+      # `dist/` contains the built packages, and the
+      # sigstore-produced signatures and certificates.
+      run: >-
+        gh release upload
+        '${{ github.ref_name }}' dist/**
+        --repo '${{ github.repository }}'
+
+  publish-to-testpypi:
+    name: Publish Python 🐍 distribution 📦 to TestPyPI
+    needs:
+    - build
+    runs-on: ubuntu-latest
+
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/test_validation
+    permissions:
+      id-token: write  # IMPORTANT: mandatory for trusted publishing
+
+    steps:
+    - name: Download all the dists
+      uses: actions/download-artifact@v3
+      with:
+        name: python-package-distributions
+        path: dist/
+    - name: Publish distribution 📦 to TestPyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        repository-url: https://test.pypi.org/legacy/
