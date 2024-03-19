@@ -33,7 +33,7 @@ description = "A comprehensive I/O validator for electronic structure calculatio
 dynamic = ["version"]
 keywords = ["io", "validation", "dft", "vasp"]
 license = { text = "modified BSD" }
-name = "pymatgen-io-validation"
+name = "test-validation"
 readme = "README.md"
 requires-python = '>=3.8'
 
