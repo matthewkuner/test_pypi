@@ -16,8 +16,8 @@ permissions:
 
 jobs:
   test:
-    # run test.yml first to ensure that the test suite is passing
-    uses: ./.github/workflows/test.yml
+    # run testing.yml first to ensure that the test suite is passing
+    uses: ./.github/workflows/testing.yml
 
   build_sdist:
     needs: test
