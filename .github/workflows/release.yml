@@ -33,7 +33,7 @@ jobs:
         with:
           user: __token__
           password: ${{ secrets.PYPY_API_TOKEN }}
-          packages_dir: ./${{ matrix.package }}/dist/
+          packages_dir: ./dist/
 
   # docs:
   #   runs-on: ubuntu-latest
