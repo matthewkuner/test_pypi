@@ -1,82 +1,93 @@
-name: Release # makes PyPI releases
+name: release
 
 on:
   push:
   release:
     types: [published]
-  workflow_dispatch:
-    inputs:
-      task:
-        type: choice
-        options: [release, test-release]
-        default: release
-        description: Release to PyPI or TestPyPI.
-
-permissions:
-  contents: read
 
 jobs:
-  build_sdist:
+  deploy:
     runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 1
+      matrix:
+        package: ["test_validation"]
+
     steps:
-      - name: Check out repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
-      - uses: actions/setup-python@v5
-        name: Install Python
+      - uses: actions/setup-python@v4
         with:
-          python-version: "3.11"
+          python-version: 3.8
 
-      - name: Build sdist
+      - name: Install dependencies
         run: |
-          pip install build
-          python -m build --sdist
+          python -m pip install --upgrade pip
+          pip install setuptools setuptools_scm wheel
 
-      - uses: actions/upload-artifact@v3
+      - name: Build packages
+        run: python setup.py sdist bdist_wheel
+        working-directory: ./${{ matrix.package }}/
+
+      - name: Publish package
+        uses: pypa/gh-action-pypi-publish@master
         with:
-          path: dist/*.tar.gz
+          user: __token__
+          password: ${{ secrets.PYPY_API_TOKEN }}
+          packages_dir: ./${{ matrix.package }}/dist/
 
-  build_wheels:
+  docs:
+    runs-on: ubuntu-latest
+    needs:
+      - deploy
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-14, windows-latest]
-        python-version: ["311"]
-    runs-on: ${{ matrix.os }}
+        os: ['ubuntu-latest'] # TODO openbabel for windows
+        python-version: ["3.8"] # TODO numpy import error for pymatgen install in 3.10
+
     steps:
-      - name: Check out repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
-      - name: Build wheels
-        uses: pypa/cibuildwheel@v2.16.5
-        env:
-          CIBW_BUILD: cp${{ matrix.python-version }}-*
-
-      - name: Save artifact
-        uses: actions/upload-artifact@v3
+      - uses: actions/setup-python@v4
         with:
-          path: ./wheelhouse/*.whl
+          python-version: 3.8
 
-  release:
-    needs: [build_wheels, build_sdist]
-    runs-on: ubuntu-latest
-    permissions:
-      # For pypi trusted publishing
-      id-token: write
-    steps:
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: 3.11
+      - name: Install Python dependencies
+        shell: bash -l {0}
+        run: |
+          python${{ matrix.python-version }} -m pip install --upgrade pip pip-tools
+          python${{ matrix.python-version }} -m pip install --user `grep numpy emmet-core/requirements/${{ matrix.os }}_py${{ matrix.python-version }}_extras.txt`
+          python${{ matrix.python-version }} -m piptools sync --user emmet-core/requirements/${{ matrix.os }}_py${{ matrix.python-version }}_extras.txt
+          python${{ matrix.python-version }} -m pip install --user `grep numpy emmet-builders/requirements/${{ matrix.os }}_py${{ matrix.python-version }}_extras.txt`
+          python${{ matrix.python-version }} -m piptools sync --user emmet-builders/requirements/${{ matrix.os }}_py${{ matrix.python-version }}_extras.txt
+          python${{ matrix.python-version }} -m pip install --user `grep numpy emmet-api/requirements/${{ matrix.os }}_py${{ matrix.python-version }}_extras.txt`
+          python${{ matrix.python-version }} -m piptools sync --user emmet-api/requirements/${{ matrix.os }}_py${{ matrix.python-version }}_extras.txt
 
-      - name: Get build artifacts
-        uses: actions/download-artifact@v3
+      - name: Generate changelog
+        uses: charmixer/auto-changelog-action@v1
         with:
-          name: artifact
-          path: dist
+          token: ${{ secrets.GITHUB_TOKEN }}
+          exclude_labels: dependencies
 
-      - name: Publish to PyPi or TestPyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Commit files
+        run: |
+          git config --local user.email "feedback@materialsproject.org"
+          git config --local user.name "materialsproject"
+          git stash
+          git pull origin main
+          mv CHANGELOG.md docs/
+          git add docs/CHANGELOG.md && git commit -m 'Updated CHANGELOG.md'
+
+      - name: Push changes
+        uses: ad-m/github-push-action@master
         with:
-          skip-existing: true
-          verbose: true
-          repository-url: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.task == 'test-release' && 'https://test.pypi.org/legacy/' || '' }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build
+        run: mkdocs build
+
+      - name: Deploy
+        uses: peaceiris/actions-gh-pages@v3.9.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
