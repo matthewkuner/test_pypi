@@ -27,25 +27,11 @@ jobs:
 
       - name: Build packages
         run: python setup.py sdist bdist_wheel
-
-  publish-to-testpypi:
-    name: Publish Python 🐍 distribution 📦 to TestPyPI
-    runs-on: ubuntu-latest
-
-    environment:
-      name: testpypi
-      url: https://test.pypi.org/p/test_validation
-      
-    steps:
-      - name: download all the dists
-        uses: actions/download-artifact@v3
-        with:
-          name: python-package-distributions
-          path: dist/
         
       - name: Publish package
         uses: pypa/gh-action-pypi-publish@master
         with:
+          packages_dir: dist/
           skip-existing: true
           verbose: true
           user: __token__
